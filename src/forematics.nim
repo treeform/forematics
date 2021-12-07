@@ -1,7 +1,6 @@
 ## Metamath Proof verifier written in Nim
 
-import strutils, sequtils, sets, tables, algorithm, strformat, deques, os
-
+import algorithm, deques, os, sequtils, sets, strformat, strutils, tables
 proc error(msg: string) =
   echo msg
   quit()
@@ -112,7 +111,7 @@ proc newTokens(fileName: string): Tokens =
 proc eatWhitespace(tokens: Tokens) =
   while tokens.index < tokens.text.len and
     tokens.text[tokens.index] in {' ', '\n'}:
-      inc tokens.index
+    inc tokens.index
 
 proc read(tokens: Tokens): Symbol =
   if tokens.index >= tokens.text.len:
@@ -122,7 +121,7 @@ proc read(tokens: Tokens): Symbol =
   var token = ""
   while tokens.index < tokens.text.len and
     tokens.text[tokens.index] notin {' ', '\n'}:
-      inc tokens.index
+    inc tokens.index
   token = tokens.text[start ..< tokens.index]
   return sym(token)
 
@@ -133,13 +132,13 @@ proc readc(tokens: Tokens): Symbol =
   while tokens.index + 1 < tokens.text.len and
     tokens.text[tokens.index] == '$' and
     tokens.text[tokens.index+1] == '(':
-      tokens.index += 2
-      while tokens.index + 1 < tokens.text.len and
-        (tokens.text[tokens.index] != '$' or
-        tokens.text[tokens.index+1] != ')'):
-          inc tokens.index
-      tokens.index += 2
-      tokens.eatWhitespace()
+    tokens.index += 2
+    while tokens.index + 1 < tokens.text.len and
+      (tokens.text[tokens.index] != '$' or
+      tokens.text[tokens.index+1] != ')'):
+        inc tokens.index
+    tokens.index += 2
+    tokens.eatWhitespace()
 
   result = tokens.read()
 
@@ -185,7 +184,7 @@ proc lookup_f(self: var seq[Frame], variable: Symbol): Symbol =
 
 proc lookup_d(self: var seq[Frame], x, y: Symbol): bool =
   for frame in reversed(self):
-    if (min(x,y), max(x,y)) in frame.d:
+    if (min(x, y), max(x, y)) in frame.d:
       return true
 
 proc lookup_e(self: var seq[Frame], stmt: seq[Symbol]): Symbol =
@@ -196,12 +195,12 @@ proc lookup_e(self: var seq[Frame], stmt: seq[Symbol]): Symbol =
 
 proc add_f(self: var seq[Frame], variable, kind, label: Symbol) =
   if not self.lookupVar(variable):
-      error(&"Var in $f not defined: {variable}")
+    error(&"Var in $f not defined: {variable}")
   if not self.lookupConst(kind):
-      error(&"Const in $f not defined {kind}")
+    error(&"Const in $f not defined {kind}")
   var frame = self[^1]
   if variable in frame.fLabels:
-      error(&"Var in $f already defined in scope")
+    error(&"Var in $f already defined in scope")
   frame.f.add((variable, kind))
   frame.fLabels[variable] = label
 
@@ -291,39 +290,39 @@ proc decompressProof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
     prevProofs: seq[seq[int]]
 
   for code in proofInts:
-      if code == -1:
-        subProofs.add(prevProofs[^1])
-      elif 0 <= code and code < hypEnd:
-          prevProofs.add(@[code])
-          decompressedInts.add(code)
-      elif hypEnd <= code and code < labelEnd:
-          decompressedInts.add(code)
-          var step = self.labels[labels[code]]
-          var stepType = step[0]
-          var stepData = step[1]
+    if code == -1:
+      subProofs.add(prevProofs[^1])
+    elif 0 <= code and code < hypEnd:
+      prevProofs.add(@[code])
+      decompressedInts.add(code)
+    elif hypEnd <= code and code < labelEnd:
+      decompressedInts.add(code)
+      var step = self.labels[labels[code]]
+      var stepType = step[0]
+      var stepData = step[1]
 
-          if stepType in [A_SYM, P_SYM]:
-              var
-                vars = stepData.mandatoryHypStmts
-                hyps = stepData.hypStmts
-                newPrevProof: seq[int]
-              var nsHyps = len(hyps) + len(vars)
-              if nsHyps != 0:
-                  for p in prevProofs[prevProofs.len - nsHyps .. ^1]:
-                    for s in p:
-                      newPrevProof.add(s)
-                  newPrevProof.add @[code]
-                  prevProofs = prevProofs[0 ..< prevProofs.len - nsHyps]
-              else:
-                newPrevProof = @[code]
-              prevProofs.add(newPrevProof)
-          else:
-            prevProofs.add(@[code])
+      if stepType in [A_SYM, P_SYM]:
+        var
+          vars = stepData.mandatoryHypStmts
+          hyps = stepData.hypStmts
+          newPrevProof: seq[int]
+        var nsHyps = len(hyps) + len(vars)
+        if nsHyps != 0:
+          for p in prevProofs[prevProofs.len - nsHyps .. ^1]:
+            for s in p:
+              newPrevProof.add(s)
+          newPrevProof.add @[code]
+          prevProofs = prevProofs[0 ..< prevProofs.len - nsHyps]
+        else:
+          newPrevProof = @[code]
+        prevProofs.add(newPrevProof)
+      else:
+        prevProofs.add(@[code])
 
-      elif labelEnd <= code:
-          var pf = subProofs[code - labelEnd]
-          decompressedInts.add(pf)
-          prevProofs.add(pf)
+    elif labelEnd <= code:
+      var pf = subProofs[code - labelEnd]
+      decompressedInts.add(pf)
+      prevProofs.add(pf)
 
   for i in decompressedInts:
     result.add(labels[i])
@@ -333,11 +332,11 @@ proc applySubst(
   stat: seq[Symbol],
   subst: Table[Symbol, seq[Symbol]]
 ): Label =
-    var arr: seq[Symbol]
-    for token in stat:
-        if token in subst: arr.add(subst[token])
-        else: arr.add(token)
-    return Label(kind: Simple, arr:arr)
+  var arr: seq[Symbol]
+  for token in stat:
+    if token in subst: arr.add(subst[token])
+    else: arr.add(token)
+  return Label(kind: Simple, arr: arr)
 
 proc findVars(self: MM, stat: seq[Symbol]): seq[Symbol] =
   for x in stat:
@@ -452,7 +451,7 @@ proc read(self: MM, tokens: Tokens) =
       if label == None: error("$e must have label")
       var stat = tokens.readStat()
       self.stack.add_e(stat, label)
-      self.labels[label] = (E_SYM, Label(kind: Simple, arr:stat))
+      self.labels[label] = (E_SYM, Label(kind: Simple, arr: stat))
       label = None
 
     elif token == P_SYM:

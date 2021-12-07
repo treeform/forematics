@@ -12,5 +12,4 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - uses: jiro4989/setup-nim-action@v1
-    - run: nimble test -y
-    - run: nimble test --gc:orc -y
+    - run: nim c -d:release --gc:arc -r src/forematics.nim mm/set.mm

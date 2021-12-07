@@ -1,7 +1,10 @@
-# You can use this nim template to jump start your nim library or project.
+# Forematics is a Metamath verifier written in Nim
 
-This template includes:
-* MIT licence
-* src directory and a private common.nim
-* test directory
-* GitHub Actions to run the tests on GitHub
+Big thanks goes to David A. Wheeler and his python version: https://github.com/david-a-wheeler/mmverify.py
+
+## Usage
+```
+nim c -d:release --gc:arc -r src/forematics.nim "mm/set.mm"
+```
+
+Download the letest set.mm from https://github.com/metamath/set.mm

@@ -34,7 +34,7 @@ type
       hypStmts: seq[seq[Symbol]]
       stat: seq[Symbol]
 
-  MM = ref object
+  Verifier = ref object
     stack: seq[Frame]
     labels: Table[Symbol, (Symbol, Label)]
     onlyLabel: Symbol
@@ -82,8 +82,8 @@ proc sym(s: string): Symbol =
   symbolMapping[s] = result
   symbolMappingRev[result] = s
 
-proc newMM(): MM =
-  result = MM()
+proc newVerifier(): Verifier =
+  result = Verifier()
   doAssert sym("") == None # Create None symbol
   doAssert sym("$a") == A_SYM
   doAssert sym("$f") == F_SYM
@@ -142,11 +142,11 @@ proc readc(tokens: Tokens): Symbol =
 
   result = tokens.read()
 
-proc readStat(self: Tokens): seq[Symbol] =
-  var token = self.readc()
+proc readStat(tokens: Tokens): seq[Symbol] =
+  var token = tokens.readc()
   while token != DOT_SYM:
     result.add(token)
-    token = self.readc()
+    token = tokens.readc()
 
 proc push(stack: var seq[Frame]) =
   stack.add(Frame())
@@ -166,75 +166,75 @@ proc addVar(stack: var seq[Frame], token: Symbol) =
     error("Var already defined as const in scope")
   frame.vars.incl(token)
 
-proc lookupConst(self: var seq[Frame], token: Symbol): bool =
-  for i in countdown(self.len - 1, 0):
-    if token in self[i].consts:
+proc lookupConst(stack: var seq[Frame], token: Symbol): bool =
+  for i in countdown(stack.len - 1, 0):
+    if token in stack[i].consts:
       return true
 
-proc lookupVar(self: var seq[Frame], token: Symbol): bool =
-  for i in countdown(self.len - 1, 0):
-    if token in self[i].vars:
+proc lookupVar(stack: var seq[Frame], token: Symbol): bool =
+  for i in countdown(stack.len - 1, 0):
+    if token in stack[i].vars:
       return true
 
-proc lookup_f(self: var seq[Frame], variable: Symbol): Symbol =
-  for frame in reversed(self):
+proc lookup_f(stack: var seq[Frame], variable: Symbol): Symbol =
+  for frame in reversed(stack):
     if variable in frame.fLabels:
       return frame.fLabels[variable]
   error(&"Key error: {variable}")
 
-proc lookup_d(self: var seq[Frame], x, y: Symbol): bool =
-  for frame in reversed(self):
+proc lookup_d(stack: var seq[Frame], x, y: Symbol): bool =
+  for frame in reversed(stack):
     if (min(x, y), max(x, y)) in frame.d:
       return true
 
-proc lookup_e(self: var seq[Frame], stmt: seq[Symbol]): Symbol =
-  for frame in reversed(self):
+proc lookup_e(stack: var seq[Frame], stmt: seq[Symbol]): Symbol =
+  for frame in reversed(stack):
     if stmt in frame.eLabels:
       return frame.eLabels[stmt]
   error(&"Key error: {stmt}")
 
-proc add_f(self: var seq[Frame], variable, kind, label: Symbol) =
-  if not self.lookupVar(variable):
+proc add_f(stack: var seq[Frame], variable, kind, label: Symbol) =
+  if not stack.lookupVar(variable):
     error(&"Var in $f not defined: {variable}")
-  if not self.lookupConst(kind):
+  if not stack.lookupConst(kind):
     error(&"Const in $f not defined {kind}")
-  var frame = self[^1]
+  var frame = stack[^1]
   if variable in frame.fLabels:
     error(&"Var in $f already defined in scope")
   frame.f.add((variable, kind))
   frame.fLabels[variable] = label
 
-proc add_e(self: var seq[Frame], stat: seq[Symbol], label: Symbol) =
-  var frame = self[^1]
+proc add_e(stack: var seq[Frame], stat: seq[Symbol], label: Symbol) =
+  var frame = stack[^1]
   frame.e.add(stat)
   frame.eLabels[stat] = label
 
-proc add_d(self: var seq[Frame], stat: seq[Symbol]) =
-  var frame = self[^1]
+proc add_d(stack: var seq[Frame], stat: seq[Symbol]) =
+  var frame = stack[^1]
   for x in stat:
     for y in stat:
       if x != y:
         frame.d.incl((min(x, y), max(x, y)))
 
-proc makeAssertion(self: var seq[Frame], stat: seq[Symbol]): (
+proc makeAssertion(stack: var seq[Frame], stat: seq[Symbol]): (
   HashSet[(Symbol, Symbol)],
   Deque[(Symbol, Symbol)],
   seq[seq[Symbol]],
   seq[Symbol]
 ) =
   var eHyps: seq[seq[Symbol]]
-  for frame in self:
+  for frame in stack:
     for eh in frame.e:
       eHyps.add(eh)
 
   var mandatoryVars: HashSet[Symbol]
   for hyp in eHyps & @[stat]:
     for token in hyp:
-      if self.lookupVar(token):
+      if stack.lookupVar(token):
         mandatoryVars.incl(token)
 
   var dvs: HashSet[(Symbol, Symbol)]
-  for frame in self:
+  for frame in stack:
     for x in mandatoryVars:
       for y in mandatoryVars:
         let pair = (x, y)
@@ -242,7 +242,7 @@ proc makeAssertion(self: var seq[Frame], stat: seq[Symbol]): (
           dvs.incl((x, y))
 
   var fHyps: Deque[(Symbol, Symbol)]
-  for frame in reversed(self):
+  for frame in reversed(stack):
     for (v, k) in reversed(frame.f):
       if v in mandatoryVars:
         fHyps.addFirst((k, v))
@@ -253,16 +253,16 @@ proc makeAssertion(self: var seq[Frame], stat: seq[Symbol]): (
   result[2] = eHyps
   result[3] = stat
 
-proc decompressProof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
-  var (_, mandatoryHypStmts, hypStmts, _) = self.stack.makeAssertion(stat)
+proc decompressProof(verifier: Verifier, stat, proof: seq[Symbol]): seq[Symbol] =
+  var (_, mandatoryHypStmts, hypStmts, _) = verifier.stack.makeAssertion(stat)
 
   var mandatoryHyps: seq[Symbol]
   for (k, v) in mandatoryHypStmts:
-    mandatoryHyps.add(self.stack.lookup_f(v))
+    mandatoryHyps.add(verifier.stack.lookup_f(v))
 
   var hyps: seq[Symbol]
   for s in hypStmts:
-    hyps.add(self.stack.lookup_e(s))
+    hyps.add(verifier.stack.lookup_e(s))
 
   var
     labels = mandatoryHyps & hyps
@@ -297,7 +297,7 @@ proc decompressProof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
       decompressedInts.add(code)
     elif hypEnd <= code and code < labelEnd:
       decompressedInts.add(code)
-      var step = self.labels[labels[code]]
+      var step = verifier.labels[labels[code]]
       var stepType = step[0]
       var stepData = step[1]
 
@@ -328,7 +328,7 @@ proc decompressProof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
     result.add(labels[i])
 
 proc applySubst(
-  self: MM,
+  verifier: Verifier,
   stat: seq[Symbol],
   subst: Table[Symbol, seq[Symbol]]
 ): Label =
@@ -338,25 +338,25 @@ proc applySubst(
     else: arr.add(token)
   return Label(kind: Simple, arr: arr)
 
-proc findVars(self: MM, stat: seq[Symbol]): seq[Symbol] =
+proc findVars(verifier: Verifier, stat: seq[Symbol]): seq[Symbol] =
   for x in stat:
-    if x notin result and self.stack.lookupVar(x):
+    if x notin result and verifier.stack.lookupVar(x):
       result.add(x)
 
-proc verify(self: MM, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
+proc verify(verifier: Verifier, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
   echo "Verifying ", statLabel
   var
     stack: seq[Label]
     proof = proofIn
 
   if proof[0] == OPEN_PR_SYM:
-    proof = self.decompressProof(stat, proof)
+    proof = verifier.decompressProof(stat, proof)
 
   for label in proof:
 
     var
-      stepType = self.labels[label][0]
-      stepData = self.labels[label][1]
+      stepType = verifier.labels[label][0]
+      stepData = verifier.labels[label][1]
 
     if stepType in [A_SYM, P_SYM]:
       var
@@ -382,17 +382,17 @@ proc verify(self: MM, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
       if distinctR.len > 0:
         for (x, y) in distinctR:
 
-          let xVars = self.findVars(subst[x])
-          let yVars = self.findVars(subst[y])
+          let xVars = verifier.findVars(subst[x])
+          let yVars = verifier.findVars(subst[y])
 
           for x in xVars:
             for y in yVars:
-              if x == y or not self.stack.lookup_d(x, y):
+              if x == y or not verifier.stack.lookup_d(x, y):
                 error(&"Disjoint violation {x} {y}")
 
       for h in hyp:
         var entry = stack[sp]
-        var substH = self.applySubst(h, subst)
+        var substH = verifier.applySubst(h, subst)
         if entry.kind != substH.kind and entry.arr != substH.arr:
           error("Stack entry doesn't match hypothesis")
         sp += 1
@@ -400,7 +400,7 @@ proc verify(self: MM, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
       if stack.len != 0 and npop != 0:
         stack.delete((stack.len - npop) ..< stack.len)
 
-      stack.add(self.applySubst(resultR, subst))
+      stack.add(verifier.applySubst(resultR, subst))
 
     elif stepType in [E_SYM, F_SYM]:
       stack.add(stepData)
@@ -411,35 +411,35 @@ proc verify(self: MM, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
   if stack[0].arr != stat:
     error("Assertion proved doesn't match")
 
-proc read(self: MM, tokens: Tokens) =
-  self.stack.push()
+proc read(verifier: Verifier, tokens: Tokens) =
+  verifier.stack.push()
   var
     label = None
     token = tokens.readc()
   while token != None and token != CLOSE_CRB_SYM:
     if token == C_SYM:
       for token in tokens.readStat():
-        self.stack.addConst(token)
+        verifier.stack.addConst(token)
 
     elif token == V_SYM:
       for token in tokens.readStat():
-        self.stack.addVar(token)
+        verifier.stack.addVar(token)
 
     elif token == F_SYM:
       var stat = tokens.readStat()
       if label == None: error("$f must have label")
       if stat.len != 2: error("$f must have be length 2")
 
-      self.stack.add_f(stat[1], stat[0], label)
-      self.labels[label] =
+      verifier.stack.add_f(stat[1], stat[0], label)
+      verifier.labels[label] =
         (F_SYM, Label(kind: Simple, arr: @[stat[0], stat[1]]))
       label = None
 
     elif token == A_SYM:
       if label == None: error("$a must have label")
-      if label == self.stopLabel: quit(0)
-      let ass = self.stack.makeAssertion(tokens.readStat())
-      self.labels[label] = (A_SYM, Label(kind: Complex,
+      if label == verifier.stopLabel: quit(0)
+      let ass = verifier.stack.makeAssertion(tokens.readStat())
+      verifier.labels[label] = (A_SYM, Label(kind: Complex,
         dm: ass[0],
         mandatoryHypStmts: ass[1],
         hypStmts: ass[2],
@@ -450,13 +450,13 @@ proc read(self: MM, tokens: Tokens) =
     elif token == E_SYM:
       if label == None: error("$e must have label")
       var stat = tokens.readStat()
-      self.stack.add_e(stat, label)
-      self.labels[label] = (E_SYM, Label(kind: Simple, arr: stat))
+      verifier.stack.add_e(stat, label)
+      verifier.labels[label] = (E_SYM, Label(kind: Simple, arr: stat))
       label = None
 
     elif token == P_SYM:
       if label == None: error("$p must have label")
-      if label == self.stopLabel: quit(0)
+      if label == verifier.stopLabel: quit(0)
       var stat = tokens.readStat()
       var proof: seq[Symbol]
 
@@ -466,24 +466,24 @@ proc read(self: MM, tokens: Tokens) =
       proof = stat[i + 1 .. ^1]
       stat = stat[0 ..< i]
 
-      if self.onlyLabel != None:
-        if label == self.onlyLabel:
-          self.verify(label, stat, proof)
-      elif self.beginLabel != None:
-        if label == self.beginLabel:
-          self.began = true
-        if self.began:
-          self.verify(label, stat, proof)
-      elif self.stopLabel != None:
-        if label == self.stopLabel:
-          self.verify(label, stat, proof)
+      if verifier.onlyLabel != None:
+        if label == verifier.onlyLabel:
+          verifier.verify(label, stat, proof)
+      elif verifier.beginLabel != None:
+        if label == verifier.beginLabel:
+          verifier.began = true
+        if verifier.began:
+          verifier.verify(label, stat, proof)
+      elif verifier.stopLabel != None:
+        if label == verifier.stopLabel:
+          verifier.verify(label, stat, proof)
         quit()
       else:
-        self.verify(label, stat, proof)
+        verifier.verify(label, stat, proof)
 
-      let ass = self.stack.makeAssertion(stat)
+      let ass = verifier.stack.makeAssertion(stat)
 
-      self.labels[label] = (P_SYM, Label(kind: Complex,
+      verifier.labels[label] = (P_SYM, Label(kind: Complex,
         dm: ass[0],
         mandatoryHypStmts: ass[1],
         hypStmts: ass[2],
@@ -492,10 +492,10 @@ proc read(self: MM, tokens: Tokens) =
       label = None
 
     elif token == D_SYM:
-      self.stack.add_d(tokens.readStat())
+      verifier.stack.add_d(tokens.readStat())
 
     elif token == OPEN_CRB_SYM:
-      self.read(tokens)
+      verifier.read(tokens)
 
     elif ($token)[0] != '$':
       label = token
@@ -505,16 +505,16 @@ proc read(self: MM, tokens: Tokens) =
 
     token = tokens.readc()
 
-  discard self.stack.pop()
+  discard verifier.stack.pop()
 
 when isMainModule:
   if paramCount() < 1:
     quit("forematics set.mm [start-symbol] [stop-symbol]")
   let tokens = newTokens(paramStr(1))
-  let mm = newMM()
+  let verifier = newVerifier()
   if paramCount() == 2:
-    mm.onlyLabel = paramStr(2).sym
+    verifier.onlyLabel = paramStr(2).sym
   elif paramCount() == 3:
-    mm.beginLabel = paramStr(2).sym
-    mm.stopLabel = paramStr(3).sym
-  mm.read(tokens)
+    verifier.beginLabel = paramStr(2).sym
+    verifier.stopLabel = paramStr(3).sym
+  verifier.read(tokens)

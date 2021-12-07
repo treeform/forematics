@@ -10,17 +10,17 @@ type
   Symbol = uint32
 
   Tokens = ref object
-    at: int
+    index: int
     text: string
 
   Frame = ref object
-    c: HashSet[Symbol]
-    v: HashSet[Symbol]
+    consts: HashSet[Symbol]
+    vars: HashSet[Symbol]
     d: HashSet[(Symbol, Symbol)]
     f: seq[(Symbol, Symbol)]
-    f_labels: Table[Symbol, Symbol]
+    fLabels: Table[Symbol, Symbol]
     e: seq[seq[Symbol]]
-    e_labels: Table[seq[Symbol], Symbol]
+    eLabels: Table[seq[Symbol], Symbol]
 
   LabelKind = enum
     Simple
@@ -31,17 +31,17 @@ type
       arr: seq[Symbol]
     of Complex:
       dm: HashSet[(Symbol, Symbol)]
-      mand_hyp_stmts: Deque[(Symbol, Symbol)]
-      hyp_stmts: seq[seq[Symbol]]
+      mandatoryHypStmts: Deque[(Symbol, Symbol)]
+      hypStmts: seq[seq[Symbol]]
       stat: seq[Symbol]
 
   MM = ref object
-    fs: seq[Frame]
+    stack: seq[Frame]
     labels: Table[Symbol, (Symbol, Label)]
-    only_label: Symbol
-    begin_label: Symbol
+    onlyLabel: Symbol
+    beginLabel: Symbol
     began: bool
-    stop_label: Symbol
+    stopLabel: Symbol
 
 var
   symbolMapping: Table[string, Symbol]
@@ -109,103 +109,106 @@ proc newTokens(fileName: string): Tokens =
   result = Tokens()
   result.text = readFile(fileName)
 
-proc eatWhitespace(toks: Tokens) =
-  while toks.at < toks.text.len and toks.text[toks.at] in {' ', '\n'}:
-    inc toks.at
+proc eatWhitespace(tokens: Tokens) =
+  while tokens.index < tokens.text.len and
+    tokens.text[tokens.index] in {' ', '\n'}:
+      inc tokens.index
 
-proc read(toks: Tokens): Symbol =
-  if toks.at >= toks.text.len:
+proc read(tokens: Tokens): Symbol =
+  if tokens.index >= tokens.text.len:
     return None
-  toks.eatWhitespace()
-  let start = toks.at
+  tokens.eatWhitespace()
+  let start = tokens.index
   var token = ""
-  while toks.at < toks.text.len and toks.text[toks.at] notin {' ', '\n'}:
-    inc toks.at
-  token = toks.text[start ..< toks.at]
+  while tokens.index < tokens.text.len and
+    tokens.text[tokens.index] notin {' ', '\n'}:
+      inc tokens.index
+  token = tokens.text[start ..< tokens.index]
   return sym(token)
 
-proc readc(toks: Tokens): Symbol =
+proc readc(tokens: Tokens): Symbol =
 
   # Skip comment text
-  toks.eatWhitespace()
-  while toks.at + 1 < toks.text.len and
-    toks.text[toks.at] == '$' and
-    toks.text[toks.at+1] == '(':
-      toks.at += 2
-      while toks.at + 1 < toks.text.len and
-        (toks.text[toks.at] != '$' or
-        toks.text[toks.at+1] != ')'):
-          inc toks.at
-      toks.at += 2
-      toks.eatWhitespace()
+  tokens.eatWhitespace()
+  while tokens.index + 1 < tokens.text.len and
+    tokens.text[tokens.index] == '$' and
+    tokens.text[tokens.index+1] == '(':
+      tokens.index += 2
+      while tokens.index + 1 < tokens.text.len and
+        (tokens.text[tokens.index] != '$' or
+        tokens.text[tokens.index+1] != ')'):
+          inc tokens.index
+      tokens.index += 2
+      tokens.eatWhitespace()
 
-  result = toks.read()
+  result = tokens.read()
 
-proc readstat(self: Tokens): seq[Symbol] =
-  var tok = self.readc()
-  while tok != DOT_SYM:
-    result.add(tok)
-    tok = self.readc()
+proc readStat(self: Tokens): seq[Symbol] =
+  var token = self.readc()
+  while token != DOT_SYM:
+    result.add(token)
+    token = self.readc()
 
-proc push(fs: var seq[Frame]) =
-  fs.add(Frame())
+proc push(stack: var seq[Frame]) =
+  stack.add(Frame())
 
-proc add_c(fs: var seq[Frame], tok: Symbol) =
-  var frame = fs[^1]
-  if tok in frame.c: error("const already defined in scope")
-  if tok in frame.v:
-    error("const already defined as var in scope")
-  frame.c.incl(tok)
+proc addConst(stack: var seq[Frame], token: Symbol) =
+  var frame = stack[^1]
+  if token in frame.consts:
+    error("Const already defined in scope")
+  if token in frame.vars:
+    error("Const already defined as var in scope")
+  frame.consts.incl(token)
 
-proc add_v(fs: var seq[Frame], tok: Symbol) =
-  var frame = fs[^1]
-  if tok in frame.v: error("const already defined in scope")
-  if tok in frame.c:
-    error("var already defined as const in scope")
-  frame.v.incl(tok)
+proc addVar(stack: var seq[Frame], token: Symbol) =
+  var frame = stack[^1]
+  if token in frame.vars: error("Var already defined in scope")
+  if token in frame.consts:
+    error("Var already defined as const in scope")
+  frame.vars.incl(token)
 
-proc lookup_c(self: var seq[Frame], tok: Symbol): bool =
+proc lookupConst(self: var seq[Frame], token: Symbol): bool =
   for i in countdown(self.len - 1, 0):
-    if tok in self[i].c:
+    if token in self[i].consts:
       return true
 
-proc lookup_v(self: var seq[Frame], tok: Symbol): bool =
+proc lookupVar(self: var seq[Frame], token: Symbol): bool =
   for i in countdown(self.len - 1, 0):
-    if tok in self[i].v:
+    if token in self[i].vars:
       return true
 
 proc lookup_f(self: var seq[Frame], variable: Symbol): Symbol =
   for frame in reversed(self):
-    if variable in frame.f_labels:
-      return frame.f_labels[variable]
+    if variable in frame.fLabels:
+      return frame.fLabels[variable]
   error(&"Key error: {variable}")
 
 proc lookup_d(self: var seq[Frame], x, y: Symbol): bool =
-  for fr in reversed(self):
-    if (min(x,y), max(x,y)) in fr.d:
+  for frame in reversed(self):
+    if (min(x,y), max(x,y)) in frame.d:
       return true
 
 proc lookup_e(self: var seq[Frame], stmt: seq[Symbol]): Symbol =
   for frame in reversed(self):
-    if stmt in frame.e_labels:
-      return frame.e_labels[stmt]
+    if stmt in frame.eLabels:
+      return frame.eLabels[stmt]
   error(&"Key error: {stmt}")
 
 proc add_f(self: var seq[Frame], variable, kind, label: Symbol) =
-  if not self.lookup_v(variable):
-      error(&"var in $f not defined: {variable}")
-  if not self.lookup_c(kind):
-      error(&"const in $f not defined {kind}")
+  if not self.lookupVar(variable):
+      error(&"Var in $f not defined: {variable}")
+  if not self.lookupConst(kind):
+      error(&"Const in $f not defined {kind}")
   var frame = self[^1]
-  if variable in frame.f_labels:
-      error(&"var in $f already defined in scope")
+  if variable in frame.fLabels:
+      error(&"Var in $f already defined in scope")
   frame.f.add((variable, kind))
-  frame.f_labels[variable] = label
+  frame.fLabels[variable] = label
 
 proc add_e(self: var seq[Frame], stat: seq[Symbol], label: Symbol) =
   var frame = self[^1]
   frame.e.add(stat)
-  frame.e_labels[stat] = label
+  frame.eLabels[stat] = label
 
 proc add_d(self: var seq[Frame], stat: seq[Symbol]) =
   var frame = self[^1]
@@ -214,247 +217,248 @@ proc add_d(self: var seq[Frame], stat: seq[Symbol]) =
       if x != y:
         frame.d.incl((min(x, y), max(x, y)))
 
-proc make_assertion(self: var seq[Frame], stat: seq[Symbol]): (
+proc makeAssertion(self: var seq[Frame], stat: seq[Symbol]): (
   HashSet[(Symbol, Symbol)],
   Deque[(Symbol, Symbol)],
   seq[seq[Symbol]],
   seq[Symbol]
 ) =
-  var e_hyps: seq[seq[Symbol]]
-  for fr in self:
-    for eh in fr.e:
-      e_hyps.add(eh)
+  var eHyps: seq[seq[Symbol]]
+  for frame in self:
+    for eh in frame.e:
+      eHyps.add(eh)
 
-  var mand_vars: HashSet[Symbol]
-  for hyp in e_hyps & @[stat]:
-    for tok in hyp:
-      if self.lookup_v(tok):
-        mand_vars.incl(tok)
+  var mandatoryVars: HashSet[Symbol]
+  for hyp in eHyps & @[stat]:
+    for token in hyp:
+      if self.lookupVar(token):
+        mandatoryVars.incl(token)
 
   var dvs: HashSet[(Symbol, Symbol)]
-  for fr in self:
-    for x in mand_vars:
-      for y in mand_vars:
+  for frame in self:
+    for x in mandatoryVars:
+      for y in mandatoryVars:
         let pair = (x, y)
-        if pair in fr.d:
+        if pair in frame.d:
           dvs.incl((x, y))
 
-  var f_hyps: Deque[(Symbol, Symbol)]
-  for fr in reversed(self):
-    for (v, k) in reversed(fr.f):
-      if v in mand_vars:
-        f_hyps.addFirst((k, v))
-        mand_vars.excl(v)
+  var fHyps: Deque[(Symbol, Symbol)]
+  for frame in reversed(self):
+    for (v, k) in reversed(frame.f):
+      if v in mandatoryVars:
+        fHyps.addFirst((k, v))
+        mandatoryVars.excl(v)
 
   result[0] = dvs
-  result[1] = f_hyps
-  result[2] = e_hyps
+  result[1] = fHyps
+  result[2] = eHyps
   result[3] = stat
 
-proc decompress_proof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
-  var (dm, mand_hyp_stmts, hyp_stmts, stat) = self.fs.make_assertion(stat)
+proc decompressProof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
+  var (_, mandatoryHypStmts, hypStmts, _) = self.stack.makeAssertion(stat)
 
-  var mand_hyps: seq[Symbol]
-  for (k, v) in mand_hyp_stmts:
-    mand_hyps.add(self.fs.lookup_f(v))
+  var mandatoryHyps: seq[Symbol]
+  for (k, v) in mandatoryHypStmts:
+    mandatoryHyps.add(self.stack.lookup_f(v))
 
   var hyps: seq[Symbol]
-  for s in hyp_stmts:
-    hyps.add(self.fs.lookup_e(s))
+  for s in hypStmts:
+    hyps.add(self.stack.lookup_e(s))
 
   var
-    labels = mand_hyps & hyps
-    hyp_end = len(labels)
-    ep = proof.find(CLOSE_PR_SYM)
-  labels.add proof[1 ..< ep]
+    labels = mandatoryHyps & hyps
+    hypEnd = len(labels)
+    proofEnd = proof.find(CLOSE_PR_SYM)
+  labels.add proof[1 ..< proofEnd]
 
-  var proof_ints: seq[int]
-  var cur_int = 0
-
-  for i in ep + 1 ..< proof.len:
+  var proofInts: seq[int]
+  var currInt = 0
+  for i in proofEnd + 1 ..< proof.len:
     for ch in $proof[i]:
       if ch == 'Z':
-        proof_ints.add(-1)
+        proofInts.add(-1)
       elif 'A' <= ch and ch <= 'T':
-        cur_int = (20 * cur_int + ord(ch) - ord('A') + 1)
-        proof_ints.add(cur_int - 1)
-        cur_int = 0
+        currInt = (20 * currInt + ord(ch) - ord('A') + 1)
+        proofInts.add(currInt - 1)
+        currInt = 0
       elif 'U' <= ch and ch <= 'Y':
-        cur_int = (5 * cur_int + ord(ch) - ord('U') + 1)
+        currInt = (5 * currInt + ord(ch) - ord('U') + 1)
 
   var
-    label_end = len(labels)
-    decompressed_ints: seq[int]
-    subproofs: seq[seq[int]]
-    prev_proofs: seq[seq[int]]
+    labelEnd = len(labels)
+    decompressedInts: seq[int]
+    subProofs: seq[seq[int]]
+    prevProofs: seq[seq[int]]
 
-  for pf_int in proof_ints:
-      if pf_int == -1:
-        subproofs.add(prev_proofs[^1])
-      elif 0 <= pf_int and pf_int < hyp_end:
-          prev_proofs.add(@[pf_int])
-          decompressed_ints.add(pf_int)
-      elif hyp_end <= pf_int and pf_int < label_end:
-          decompressed_ints.add(pf_int)
-          var step = self.labels[labels[pf_int]]
-          var step_type = step[0]
-          var step_data = step[1]
+  for code in proofInts:
+      if code == -1:
+        subProofs.add(prevProofs[^1])
+      elif 0 <= code and code < hypEnd:
+          prevProofs.add(@[code])
+          decompressedInts.add(code)
+      elif hypEnd <= code and code < labelEnd:
+          decompressedInts.add(code)
+          var step = self.labels[labels[code]]
+          var stepType = step[0]
+          var stepData = step[1]
 
-          if step_type in [A_SYM, P_SYM]:
+          if stepType in [A_SYM, P_SYM]:
               var
-                svars = step_data.mand_hyp_stmts
-                shyps = step_data.hyp_stmts
-                new_prevpf: seq[int]
-              var nshyps = len(shyps) + len(svars)
-              if nshyps != 0:
-                  for p in prev_proofs[prev_proofs.len - nshyps .. ^1]:
+                vars = stepData.mandatoryHypStmts
+                hyps = stepData.hypStmts
+                newPrevProof: seq[int]
+              var nsHyps = len(hyps) + len(vars)
+              if nsHyps != 0:
+                  for p in prevProofs[prevProofs.len - nsHyps .. ^1]:
                     for s in p:
-                      new_prevpf.add(s)
-                  new_prevpf.add @[pf_int]
-
-                  prev_proofs = prev_proofs[0 ..< prev_proofs.len - nshyps]
+                      newPrevProof.add(s)
+                  newPrevProof.add @[code]
+                  prevProofs = prevProofs[0 ..< prevProofs.len - nsHyps]
               else:
-                new_prevpf = @[pf_int]
-              prev_proofs.add(new_prevpf)
+                newPrevProof = @[code]
+              prevProofs.add(newPrevProof)
           else:
-            prev_proofs.add(@[pf_int])
+            prevProofs.add(@[code])
 
-      elif label_end <= pf_int:
-          var pf = subproofs[pf_int - label_end]
-          decompressed_ints.add(pf)
-          prev_proofs.add(pf)
+      elif labelEnd <= code:
+          var pf = subProofs[code - labelEnd]
+          decompressedInts.add(pf)
+          prevProofs.add(pf)
 
-  for i in decompressed_ints:
+  for i in decompressedInts:
     result.add(labels[i])
 
-proc apply_subst(self: MM, stat: seq[Symbol], subst: Table[Symbol, seq[Symbol]]): Label =
+proc applySubst(
+  self: MM,
+  stat: seq[Symbol],
+  subst: Table[Symbol, seq[Symbol]]
+): Label =
     var arr: seq[Symbol]
-    for tok in stat:
-        if tok in subst: arr.add(subst[tok])
-        else: arr.add(tok)
+    for token in stat:
+        if token in subst: arr.add(subst[token])
+        else: arr.add(token)
     return Label(kind: Simple, arr:arr)
 
-proc find_vars(self: MM, stat: seq[Symbol]): seq[Symbol] =
+proc findVars(self: MM, stat: seq[Symbol]): seq[Symbol] =
   for x in stat:
-    if x notin result and self.fs.lookup_v(x):
+    if x notin result and self.stack.lookupVar(x):
       result.add(x)
 
-proc verify(self: MM, stat_label: Symbol, stat, proofIn: seq[Symbol]) =
-  echo "verifying ", stat_label
+proc verify(self: MM, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
+  echo "Verifying ", statLabel
   var
     stack: seq[Label]
     proof = proofIn
 
   if proof[0] == OPEN_PR_SYM:
-    proof = self.decompress_proof(stat, proof)
+    proof = self.decompressProof(stat, proof)
 
   for label in proof:
 
     var
-      steptyp = self.labels[label][0]
-      stepdat = self.labels[label][1]
+      stepType = self.labels[label][0]
+      stepData = self.labels[label][1]
 
-    if steptyp in [A_SYM, P_SYM]:
+    if stepType in [A_SYM, P_SYM]:
       var
-        distinctR = stepdat.dm
-        mand_var = stepdat.mand_hyp_stmts
-        hyp = stepdat.hyp_stmts
-        resultR = stepdat.stat
+        distinctR = stepData.dm
+        mandatoryVar = stepData.mandatoryHypStmts
+        hyp = stepData.hypStmts
+        resultR = stepData.stat
 
-      var npop = mand_var.len + hyp.len
+      var npop = mandatoryVar.len + hyp.len
       var sp = stack.len - npop
       if sp < 0:
-        error("stack underflow")
+        error("Stack underflow")
 
       var subst: Table[Symbol, seq[Symbol]]
-      for (k, v) in mand_var:
+      for (k, v) in mandatoryVar:
         var entry = stack[sp]
         doAssert entry.kind == Simple
         if entry.arr[0] != k:
-          error(&"stack entry ({k}, {v}) doesn't match mandatory var hyp {entry.arr}")
+          error(&"Stack entry ({k}, {v}) doesn't match mandatory var hyp {entry.arr}")
         subst[v] = entry.arr[1..^1]
         sp += 1
 
       if distinctR.len > 0:
         for (x, y) in distinctR:
 
-          let x_vars = self.find_vars(subst[x])
-          let y_vars = self.find_vars(subst[y])
+          let xVars = self.findVars(subst[x])
+          let yVars = self.findVars(subst[y])
 
-          for x in x_vars:
-            for y in y_vars:
-              if x == y or not self.fs.lookup_d(x, y):
-                error(&"disjoint violation {x} {y}")
+          for x in xVars:
+            for y in yVars:
+              if x == y or not self.stack.lookup_d(x, y):
+                error(&"Disjoint violation {x} {y}")
 
       for h in hyp:
         var entry = stack[sp]
-        var subst_h = self.apply_subst(h, subst)
-        if entry.kind != subst_h.kind and entry.arr != subst_h.arr:
-          error("stack entry doesn't match hypothesis")
+        var substH = self.applySubst(h, subst)
+        if entry.kind != substH.kind and entry.arr != substH.arr:
+          error("Stack entry doesn't match hypothesis")
         sp += 1
 
       if stack.len != 0 and npop != 0:
         stack.delete((stack.len - npop) ..< stack.len)
 
-      stack.add(self.apply_subst(resultR, subst))
+      stack.add(self.applySubst(resultR, subst))
 
-    elif steptyp in [E_SYM, F_SYM]:
-      stack.add(stepdat)
+    elif stepType in [E_SYM, F_SYM]:
+      stack.add(stepData)
 
   if stack.len != 1:
-    error("stack has >1 entry at end")
+    error("Stack has >1 entry at end")
 
   if stack[0].arr != stat:
-    error("assertion proved doesn't match")
+    error("Assertion proved doesn't match")
 
-
-proc read(self: MM, toks: Tokens) =
-  self.fs.push()
+proc read(self: MM, tokens: Tokens) =
+  self.stack.push()
   var
     label = None
-    tok = toks.readc()
-  while tok != None and tok != CLOSE_CRB_SYM:
-    if tok == C_SYM:
-      for tok in toks.readstat():
-        self.fs.add_c(tok)
+    token = tokens.readc()
+  while token != None and token != CLOSE_CRB_SYM:
+    if token == C_SYM:
+      for token in tokens.readStat():
+        self.stack.addConst(token)
 
-    elif tok == V_SYM:
-      for tok in toks.readstat():
-        self.fs.add_v(tok)
+    elif token == V_SYM:
+      for token in tokens.readStat():
+        self.stack.addVar(token)
 
-    elif tok == F_SYM:
-      var stat = toks.readstat()
+    elif token == F_SYM:
+      var stat = tokens.readStat()
       if label == None: error("$f must have label")
       if stat.len != 2: error("$f must have be length 2")
 
-      self.fs.add_f(stat[1], stat[0], label)
-      self.labels[label] = (F_SYM, Label(kind: Simple, arr: @[stat[0], stat[1]]))
-      # "labels f ", ff self.labels
+      self.stack.add_f(stat[1], stat[0], label)
+      self.labels[label] =
+        (F_SYM, Label(kind: Simple, arr: @[stat[0], stat[1]]))
       label = None
 
-    elif tok == A_SYM:
+    elif token == A_SYM:
       if label == None: error("$a must have label")
-      if label == self.stop_label: quit(0)
-      let ass = self.fs.make_assertion(toks.readstat())
+      if label == self.stopLabel: quit(0)
+      let ass = self.stack.makeAssertion(tokens.readStat())
       self.labels[label] = (A_SYM, Label(kind: Complex,
         dm: ass[0],
-        mand_hyp_stmts: ass[1],
-        hyp_stmts: ass[2],
+        mandatoryHypStmts: ass[1],
+        hypStmts: ass[2],
         stat: ass[3]
       ))
       label = None
 
-    elif tok == E_SYM:
+    elif token == E_SYM:
       if label == None: error("$e must have label")
-      var stat = toks.readstat()
-      self.fs.add_e(stat, label)
+      var stat = tokens.readStat()
+      self.stack.add_e(stat, label)
       self.labels[label] = (E_SYM, Label(kind: Simple, arr:stat))
       label = None
 
-    elif tok == P_SYM:
+    elif token == P_SYM:
       if label == None: error("$p must have label")
-      if label == self.stop_label: quit(0)
-      var stat = toks.readstat()
+      if label == self.stopLabel: quit(0)
+      var stat = tokens.readStat()
       var proof: seq[Symbol]
 
       var i = stat.find(EQ_SYM)
@@ -463,55 +467,55 @@ proc read(self: MM, toks: Tokens) =
       proof = stat[i + 1 .. ^1]
       stat = stat[0 ..< i]
 
-      if self.only_label != None:
-        if label == self.only_label:
+      if self.onlyLabel != None:
+        if label == self.onlyLabel:
           self.verify(label, stat, proof)
-      elif self.begin_label != None:
-        if label == self.begin_label:
+      elif self.beginLabel != None:
+        if label == self.beginLabel:
           self.began = true
         if self.began:
           self.verify(label, stat, proof)
-      elif self.stop_label != None:
-        if label == self.stop_label:
+      elif self.stopLabel != None:
+        if label == self.stopLabel:
           self.verify(label, stat, proof)
         quit()
       else:
         self.verify(label, stat, proof)
 
-      let ass = self.fs.make_assertion(stat)
+      let ass = self.stack.makeAssertion(stat)
 
       self.labels[label] = (P_SYM, Label(kind: Complex,
         dm: ass[0],
-        mand_hyp_stmts: ass[1],
-        hyp_stmts: ass[2],
+        mandatoryHypStmts: ass[1],
+        hypStmts: ass[2],
         stat: ass[3]
       ))
       label = None
 
-    elif tok == D_SYM:
-      self.fs.add_d(toks.readstat())
+    elif token == D_SYM:
+      self.stack.add_d(tokens.readStat())
 
-    elif tok == OPEN_CRB_SYM:
-      self.read(toks)
+    elif token == OPEN_CRB_SYM:
+      self.read(tokens)
 
-    elif ($tok)[0] != '$':
-      label = tok
+    elif ($token)[0] != '$':
+      label = token
 
     else:
-      error("tok: " & $tok)
+      error("token: " & $token)
 
-    tok = toks.readc()
+    token = tokens.readc()
 
-  discard self.fs.pop()
+  discard self.stack.pop()
 
 when isMainModule:
   if paramCount() < 1:
     quit("forematics set.mm [start-symbol] [stop-symbol]")
-  let toks = newTokens(paramStr(1))
+  let tokens = newTokens(paramStr(1))
   let mm = newMM()
   if paramCount() == 2:
-    mm.only_label = paramStr(2).sym
+    mm.onlyLabel = paramStr(2).sym
   elif paramCount() == 3:
-    mm.begin_label = paramStr(2).sym
-    mm.stop_label = paramStr(3).sym
-  mm.read(toks)
+    mm.beginLabel = paramStr(2).sym
+    mm.stopLabel = paramStr(3).sym
+  mm.read(tokens)

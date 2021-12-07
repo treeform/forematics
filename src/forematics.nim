@@ -15,11 +15,11 @@ type
   Frame = ref object
     consts: HashSet[Symbol]
     vars: HashSet[Symbol]
-    d: HashSet[(Symbol, Symbol)]
-    f: seq[(Symbol, Symbol)]
-    fLabels: Table[Symbol, Symbol]
-    e: seq[seq[Symbol]]
-    eLabels: Table[seq[Symbol], Symbol]
+    distinctVars: HashSet[(Symbol, Symbol)]
+    assignments: seq[(Symbol, Symbol)]
+    assignmentLabels: Table[Symbol, Symbol]
+    hypothesis: seq[seq[Symbol]]
+    hypothesisLabels: Table[seq[Symbol], Symbol]
 
   LabelKind = enum
     Simple
@@ -54,8 +54,8 @@ const
   P_SYM = 3.Symbol # $p
   D_SYM = 4.Symbol # $d
   E_SYM = 5.Symbol # $e
-  V_SYM = 6.Symbol # $e
-  C_SYM = 7.Symbol # $e
+  V_SYM = 6.Symbol # $v
+  C_SYM = 7.Symbol # $c
 
   EQ_SYM = 8.Symbol
   DOT_SYM = 9.Symbol
@@ -176,45 +176,45 @@ proc lookupVar(stack: var seq[Frame], token: Symbol): bool =
     if token in stack[i].vars:
       return true
 
-proc lookup_f(stack: var seq[Frame], variable: Symbol): Symbol =
+proc lookupAssignments(stack: var seq[Frame], variable: Symbol): Symbol =
   for frame in reversed(stack):
-    if variable in frame.fLabels:
-      return frame.fLabels[variable]
+    if variable in frame.assignmentLabels:
+      return frame.assignmentLabels[variable]
   error(&"Key error: {variable}")
 
-proc lookup_d(stack: var seq[Frame], x, y: Symbol): bool =
+proc lookupDistinctVars(stack: var seq[Frame], x, y: Symbol): bool =
   for frame in reversed(stack):
-    if (min(x, y), max(x, y)) in frame.d:
+    if (min(x, y), max(x, y)) in frame.distinctVars:
       return true
 
-proc lookup_e(stack: var seq[Frame], stmt: seq[Symbol]): Symbol =
+proc lookupHypothesis(stack: var seq[Frame], stmt: seq[Symbol]): Symbol =
   for frame in reversed(stack):
-    if stmt in frame.eLabels:
-      return frame.eLabels[stmt]
+    if stmt in frame.hypothesisLabels:
+      return frame.hypothesisLabels[stmt]
   error(&"Key error: {stmt}")
 
-proc add_f(stack: var seq[Frame], variable, kind, label: Symbol) =
+proc addAassignment(stack: var seq[Frame], variable, kind, label: Symbol) =
   if not stack.lookupVar(variable):
     error(&"Var in $f not defined: {variable}")
   if not stack.lookupConst(kind):
     error(&"Const in $f not defined {kind}")
   var frame = stack[^1]
-  if variable in frame.fLabels:
+  if variable in frame.assignmentLabels:
     error(&"Var in $f already defined in scope")
-  frame.f.add((variable, kind))
-  frame.fLabels[variable] = label
+  frame.assignments.add((variable, kind))
+  frame.assignmentLabels[variable] = label
 
-proc add_e(stack: var seq[Frame], stat: seq[Symbol], label: Symbol) =
+proc addHypothesis(stack: var seq[Frame], stat: seq[Symbol], label: Symbol) =
   var frame = stack[^1]
-  frame.e.add(stat)
-  frame.eLabels[stat] = label
+  frame.hypothesis.add(stat)
+  frame.hypothesisLabels[stat] = label
 
 proc add_d(stack: var seq[Frame], stat: seq[Symbol]) =
   var frame = stack[^1]
   for x in stat:
     for y in stat:
       if x != y:
-        frame.d.incl((min(x, y), max(x, y)))
+        frame.distinctVars.incl((min(x, y), max(x, y)))
 
 proc makeAssertion(stack: var seq[Frame], stat: seq[Symbol]): (
   HashSet[(Symbol, Symbol)],
@@ -224,7 +224,7 @@ proc makeAssertion(stack: var seq[Frame], stat: seq[Symbol]): (
 ) =
   var eHyps: seq[seq[Symbol]]
   for frame in stack:
-    for eh in frame.e:
+    for eh in frame.hypothesis:
       eHyps.add(eh)
 
   var mandatoryVars: HashSet[Symbol]
@@ -238,12 +238,12 @@ proc makeAssertion(stack: var seq[Frame], stat: seq[Symbol]): (
     for x in mandatoryVars:
       for y in mandatoryVars:
         let pair = (x, y)
-        if pair in frame.d:
+        if pair in frame.distinctVars:
           dvs.incl((x, y))
 
   var fHyps: Deque[(Symbol, Symbol)]
   for frame in reversed(stack):
-    for (v, k) in reversed(frame.f):
+    for (v, k) in reversed(frame.assignments):
       if v in mandatoryVars:
         fHyps.addFirst((k, v))
         mandatoryVars.excl(v)
@@ -258,11 +258,11 @@ proc decompressProof(verifier: Verifier, stat, proof: seq[Symbol]): seq[Symbol] 
 
   var mandatoryHyps: seq[Symbol]
   for (k, v) in mandatoryHypStmts:
-    mandatoryHyps.add(verifier.stack.lookup_f(v))
+    mandatoryHyps.add(verifier.stack.lookupAssignments(v))
 
   var hyps: seq[Symbol]
   for s in hypStmts:
-    hyps.add(verifier.stack.lookup_e(s))
+    hyps.add(verifier.stack.lookupHypothesis(s))
 
   var
     labels = mandatoryHyps & hyps
@@ -353,7 +353,6 @@ proc verify(verifier: Verifier, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
     proof = verifier.decompressProof(stat, proof)
 
   for label in proof:
-
     var
       stepType = verifier.labels[label][0]
       stepData = verifier.labels[label][1]
@@ -387,7 +386,7 @@ proc verify(verifier: Verifier, statLabel: Symbol, stat, proofIn: seq[Symbol]) =
 
           for x in xVars:
             for y in yVars:
-              if x == y or not verifier.stack.lookup_d(x, y):
+              if x == y or not verifier.stack.lookupDistinctVars(x, y):
                 error(&"Disjoint violation {x} {y}")
 
       for h in hyp:
@@ -430,7 +429,7 @@ proc read(verifier: Verifier, tokens: Tokens) =
       if label == None: error("$f must have label")
       if stat.len != 2: error("$f must have be length 2")
 
-      verifier.stack.add_f(stat[1], stat[0], label)
+      verifier.stack.addAassignment(stat[1], stat[0], label)
       verifier.labels[label] =
         (F_SYM, Label(kind: Simple, arr: @[stat[0], stat[1]]))
       label = None
@@ -450,7 +449,7 @@ proc read(verifier: Verifier, tokens: Tokens) =
     elif token == E_SYM:
       if label == None: error("$e must have label")
       var stat = tokens.readStat()
-      verifier.stack.add_e(stat, label)
+      verifier.stack.addHypothesis(stat, label)
       verifier.labels[label] = (E_SYM, Label(kind: Simple, arr: stat))
       label = None
 

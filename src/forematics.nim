@@ -7,7 +7,7 @@ proc error(msg: string) =
   quit()
 
 type
-  Symbol = int
+  Symbol = uint32
 
   Tokens = ref object
     at: int
@@ -70,16 +70,18 @@ const
 proc `$`(s: Symbol): string =
   symbolMappingRev[s]
 
+proc `$`(ss: seq[Symbol]): string =
+  for s in ss:
+    result.add symbolMappingRev[s]
+    result.add ' '
+  result.removeSuffix(' ')
+
 proc sym(s: string): Symbol =
   if s in symbolMapping:
     return symbolMapping[s]
   result = symbolMapping.len.Symbol
   symbolMapping[s] = result
   symbolMappingRev[result] = s
-
-proc join(symbols: seq[Symbol]): string =
-  for symbol in symbols:
-    result.add $symbol
 
 proc newMM(): MM =
   result = MM()
@@ -107,11 +109,14 @@ proc newTokens(fileName: string): Tokens =
   result = Tokens()
   result.text = readFile(fileName)
 
+proc eatWhitespace(toks: Tokens) =
+  while toks.at < toks.text.len and toks.text[toks.at] in {' ', '\n'}:
+    inc toks.at
+
 proc read(toks: Tokens): Symbol =
   if toks.at >= toks.text.len:
     return None
-  while toks.at < toks.text.len and toks.text[toks.at] in {' ', '\n'}:
-    inc toks.at
+  toks.eatWhitespace()
   let start = toks.at
   var token = ""
   while toks.at < toks.text.len and toks.text[toks.at] notin {' ', '\n'}:
@@ -120,11 +125,21 @@ proc read(toks: Tokens): Symbol =
   return sym(token)
 
 proc readc(toks: Tokens): Symbol =
+
+  # Skip comment text
+  toks.eatWhitespace()
+  while toks.at + 1 < toks.text.len and
+    toks.text[toks.at] == '$' and
+    toks.text[toks.at+1] == '(':
+      toks.at += 2
+      while toks.at + 1 < toks.text.len and
+        (toks.text[toks.at] != '$' or
+        toks.text[toks.at+1] != ')'):
+          inc toks.at
+      toks.at += 2
+      toks.eatWhitespace()
+
   result = toks.read()
-  while result == OPEN_DPR_SYM:
-    while result != CLOSE_DPR_SYM:
-      result = toks.read()
-    result = toks.read()
 
 proc readstat(self: Tokens): seq[Symbol] =
   var tok = self.readc()
@@ -252,20 +267,20 @@ proc decompress_proof(self: MM, stat, proof: seq[Symbol]): seq[Symbol] =
     hyp_end = len(labels)
     ep = proof.find(CLOSE_PR_SYM)
   labels.add proof[1 ..< ep]
-  let compressed_proof = proof[ep+1 .. ^1].join()
 
   var proof_ints: seq[int]
   var cur_int = 0
 
-  for ch in compressed_proof:
-    if ch == 'Z':
-      proof_ints.add(-1)
-    elif 'A' <= ch and ch <= 'T':
-      cur_int = (20 * cur_int + ord(ch) - ord('A') + 1)
-      proof_ints.add(cur_int - 1)
-      cur_int = 0
-    elif 'U' <= ch and ch <= 'Y':
-      cur_int = (5 * cur_int + ord(ch) - ord('U') + 1)
+  for i in ep + 1 ..< proof.len:
+    for ch in $proof[i]:
+      if ch == 'Z':
+        proof_ints.add(-1)
+      elif 'A' <= ch and ch <= 'T':
+        cur_int = (20 * cur_int + ord(ch) - ord('A') + 1)
+        proof_ints.add(cur_int - 1)
+        cur_int = 0
+      elif 'U' <= ch and ch <= 'Y':
+        cur_int = (5 * cur_int + ord(ch) - ord('U') + 1)
 
   var
     label_end = len(labels)

@@ -1,6 +1,8 @@
 # Forematics is a Metamath verifier written in Nim
 
-Big thanks goes to David A. Wheeler and his python version: https://github.com/david-a-wheeler/mmverify.py
+Metamath is project that atempts to build describe mathamtics from ground up starting from very simple axioms, building more and more complex theorems on top. While having everything machine checked using a very simple verfier. Forematics is a metamath verifyer written in Nim.
+
+Big thanks to the https://github.com/david-a-wheeler/mmverify.py project which was used a base and insperation.
 
 ## Usage
 ```

@@ -9,3 +9,6 @@ nimcache
 *.pdb
 *.ilk
 .*
+*dSYM
+dump.txt
+nim.out

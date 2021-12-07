@@ -110,11 +110,11 @@ proc newTokens(fileName: string): Tokens =
 proc read(toks: Tokens): Symbol =
   if toks.at >= toks.text.len:
     return None
-  while toks.text[toks.at] in {' ', '\n'}:
+  while toks.at < toks.text.len and toks.text[toks.at] in {' ', '\n'}:
     inc toks.at
   let start = toks.at
   var token = ""
-  while toks.text[toks.at] notin {' ', '\n'}:
+  while toks.at < toks.text.len and toks.text[toks.at] notin {' ', '\n'}:
     inc toks.at
   token = toks.text[start ..< toks.at]
   return sym(token)

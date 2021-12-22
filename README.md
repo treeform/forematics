@@ -24,7 +24,7 @@ Forematics is build like any simple interpreter with with a tokenizer, parser an
 
 All "evaluation" is done by the substitution rule. There is no other built in concepts. Using the substitution rule it derives all concepts like what numbers are. Including how parentheses `()`, if-then, `+`, `-`, and all other math operators. It only [proves](http://us.metamath.org/mpegif/1p1e2.html) `1 + 1 = 2` after defining 11086 other theorems and it [proves Pythagorean theorem](http://us.metamath.org/mpegif/pythag.html) `z² = x² + y²` after defining complex numbers after doing 24464 other theorems.
 
-Forematics can't be used compute, derive, or solve equations, it's not a [Computer algebra system](https://en.wikipedia.org/wiki/Computer_algebra_system). At most, it's a small part of one that only deals with proofs, and very simple and constrained proofs at that.
+Forematics can't be used compute, derive, or solve equations, it's not a [computer algebra system](https://en.wikipedia.org/wiki/Computer_algebra_system). At most, it's a small part of one that only deals with proofs, and very simple and constrained proofs at that.
 
 Forematics is fast, because Nim is fast, and can verify and prove 30,000 proofs in 21 seconds.
 
